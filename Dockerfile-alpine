@@ -1,0 +1,54 @@
+FROM alpine:3.23
+
+ENV OXIDIZED_HOME=/etc/oxidized
+ENV PATH="/usr/local/bin:${PATH}"
+ENV GEMSPATH=/usr/lib/ruby/gems/3.4.0
+ENV OXIDIZED_VERSION=0.35
+
+RUN set -eux; \
+  apk --update add --no-cache \
+    ruby \
+        ruby-rugged \
+        ruby-dev \
+        g++ \
+        cmake \
+        make \
+        openssl-dev \
+        libssh2 \
+        icu-dev \
+        icu-libs \
+        zlib-dev \
+        msmtp \
+        bash \
+        git \
+        linux-headers \
+  ; \
+  apk upgrade; \
+  gem install -V --no-document --no-wrappers --conservative --minimal-deps \
+    oxidized \
+    oxidized-web \
+  ; \
+  apk del \
+    ruby-dev \
+        g++ \
+        cmake \
+        make \
+        openssl-dev \
+        icu-dev \
+        zlib-dev \
+        linux-headers \
+  ; \
+  mkdir $OXIDIZED_HOME; \
+  ln -s $GEMSPATH/gems/oxidized-$OXIDIZED_VERSION/extra/oxidized-report-git-commits /usr/bin/oxidized-report-git-commits; \
+  find $GEMSPATH/cache -mindepth 1 -delete
+
+# Default oxidized-web port
+EXPOSE 8888
+
+CMD ["oxidized"]
+
+# https://github.com/opencontainers/image-spec/blob/master/annotations.md
+LABEL org.opencontainers.image.authors="Will Brickles" \
+      org.opencontainers.image.title="oxidized" \
+      org.opencontainers.image.description="software to backup network switch configurations" \
+      org.opencontainers.image.version="${OXIDIZED_VERSION}"
