@@ -1,0 +1,61 @@
+FROM ubuntu:noble
+ARG DEBIAN_FRONTEND=noninteractive
+
+ENV OXIDIZED_HOME=/etc/oxidized
+ENV PATH="/usr/local/bin:${PATH}"
+ENV GEMSPATH=/var/lib/gems/3.2.0
+ENV OXIDIZED_VERSION=0.34.3
+
+RUN set -eux; \
+  apt-get update; \
+  apt-get install -y --no-install-recommends apt-utils; \
+  apt-get install -y --no-install-recommends \
+    ruby \
+    ruby-rugged \
+    ruby-dev \
+    libsqlite3-dev \
+    libssl-dev \
+    pkg-config \
+    cmake \
+    make \
+    libssh2-1-dev \
+    libicu-dev \
+    zlib1g-dev \
+    g++ \
+    libffi-dev \
+    msmtp \
+    git \
+  ; \
+  gem install -V --no-document --no-wrappers --conservative --minimal-deps \
+    oxidized \
+    oxidized-web \
+  ; \
+  apt-get remove --purge -y \
+    ruby-dev \
+    pkg-config \
+    cmake \
+    make \
+    g++ \
+    libffi-dev \
+    libsqlite3-dev \
+    libssl-dev \
+    libssh2-1-dev \
+    zlib1g-dev \
+    libffi-dev \
+  ; \
+  apt-get autoremove --purge -y; \
+  mkdir $OXIDIZED_HOME; \
+  ln -s $GEMSPATH/gems/oxidized-$OXIDIZED_VERSION/extra/oxidized-report-git-commits /usr/bin/oxidized-report-git-commits; \
+  find $GEMSPATH/cache -mindepth 1 -delete; \
+  find /var/lib/apt/lists -mindepth 1 -delete
+
+# Default oxidized-web port
+EXPOSE 8888
+
+CMD ["oxidized"]
+
+# https://github.com/opencontainers/image-spec/blob/master/annotations.md
+LABEL org.opencontainers.image.authors="Will Brickles" \
+      org.opencontainers.image.title="oxidized" \
+      org.opencontainers.image.description="software to backup network switch configurations" \
+      org.opencontainers.image.version="${OXIDIZED_VERSION}"
