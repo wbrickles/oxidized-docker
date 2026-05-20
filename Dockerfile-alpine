@@ -1,53 +1,66 @@
 FROM alpine:3.23
 
+ARG OXIDIZED_VERSION=0.37.0
 ENV OXIDIZED_HOME=/etc/oxidized
-ENV PATH="/usr/local/bin:${PATH}"
-ENV GEMSPATH=/usr/lib/ruby/gems/3.4.0
-ENV OXIDIZED_VERSION=0.35
 
 RUN set -eux; \
-  apk --update add --no-cache \
+  \
+  # Install runtime deps
+  apk add --no-cache \
     ruby \
-        ruby-rugged \
-        ruby-dev \
-        g++ \
-        cmake \
-        make \
-        openssl-dev \
-        libssh2 \
-        icu-dev \
-        icu-libs \
-        zlib-dev \
-        msmtp \
-        bash \
-        git \
-        linux-headers \
+    ruby-rugged \
+    libssh2 \
+    icu-libs \
+    zlib \
+    openssl \
+    msmtp \
+    bash \
+    git \
   ; \
-  apk upgrade; \
-  gem install -V --no-document --no-wrappers --conservative --minimal-deps \
-    oxidized \
+  \
+  # Install build deps (temporary)
+  apk add --no-cache --virtual .build-deps \
+    ruby-dev \
+    g++ \
+    cmake \
+    make \
+    openssl-dev \
+    icu-dev \
+    zlib-dev \
+    linux-headers \
+  ; \
+  \
+  # Install gems
+  gem install --no-document \
+    "oxidized:${OXIDIZED_VERSION}" \
     oxidized-web \
   ; \
-  apk del \
-    ruby-dev \
-        g++ \
-        cmake \
-        make \
-        openssl-dev \
-        icu-dev \
-        zlib-dev \
-        linux-headers \
+  \
+  # Resolve gem directory dynamically
+  GEM_DIR="$(ruby -e 'print Gem.default_dir')"; \
+  \
+  # Install helper script into stable PATH location
+  install -m 0755 \
+    "${GEM_DIR}/gems/oxidized-${OXIDIZED_VERSION}/extra/oxidized-report-git-commits" \
+    /usr/local/bin/oxidized-report-git-commits \
   ; \
-  mkdir $OXIDIZED_HOME; \
-  ln -s $GEMSPATH/gems/oxidized-$OXIDIZED_VERSION/extra/oxidized-report-git-commits /usr/bin/oxidized-report-git-commits; \
-  find $GEMSPATH/cache -mindepth 1 -delete
+  \
+  # Cleanup
+  find "${GEM_DIR}/cache" -mindepth 1 -delete; \
+  apk del .build-deps; \
+  rm -rf /var/cache/apk/*
 
-# Default oxidized-web port
+RUN addgroup -S oxidized \
+ && adduser -S -G oxidized oxidized \
+ && mkdir -p "${OXIDIZED_HOME}" \
+ && chown -R oxidized:oxidized "${OXIDIZED_HOME}"
+
+USER oxidized
+WORKDIR ${OXIDIZED_HOME}
+
 EXPOSE 8888
-
 CMD ["oxidized"]
 
-# https://github.com/opencontainers/image-spec/blob/master/annotations.md
 LABEL org.opencontainers.image.authors="Will Brickles" \
       org.opencontainers.image.title="oxidized" \
       org.opencontainers.image.description="software to backup network switch configurations" \
