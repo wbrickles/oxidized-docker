@@ -1,61 +1,72 @@
 FROM ubuntu:noble
+
 ARG DEBIAN_FRONTEND=noninteractive
+ARG OXIDIZED_VERSION=0.37.0
 
 ENV OXIDIZED_HOME=/etc/oxidized
 ENV PATH="/usr/local/bin:${PATH}"
-ENV GEMSPATH=/var/lib/gems/3.2.0
-ENV OXIDIZED_VERSION=0.34.3
 
 RUN set -eux; \
   apt-get update; \
-  apt-get install -y --no-install-recommends apt-utils; \
-  apt-get install -y --no-install-recommends \
+  \
+  # Runtime deps
+  apt-get install -y --no-install-recommends --no-install-suggests \
     ruby \
     ruby-rugged \
+    bash \
+    msmtp \
+    git \
+    ca-certificates \
+  ; \
+  \
+  # Build deps (temporary)
+  apt-get install -y --no-install-recommends --no-install-suggests \
     ruby-dev \
-    libsqlite3-dev \
-    libssl-dev \
-    pkg-config \
-    cmake \
+    g++ \
     make \
+    cmake \
+    pkg-config \
+    libssl-dev \
     libssh2-1-dev \
     libicu-dev \
     zlib1g-dev \
-    g++ \
-    libffi-dev \
-    msmtp \
-    git \
-  ; \
-  gem install -V --no-document --no-wrappers --conservative --minimal-deps \
-    oxidized \
-    oxidized-web \
-  ; \
-  apt-get remove --purge -y \
-    ruby-dev \
-    pkg-config \
-    cmake \
-    make \
-    g++ \
-    libffi-dev \
     libsqlite3-dev \
-    libssl-dev \
-    libssh2-1-dev \
-    zlib1g-dev \
     libffi-dev \
   ; \
-  apt-get autoremove --purge -y; \
-  mkdir $OXIDIZED_HOME; \
-  ln -s $GEMSPATH/gems/oxidized-$OXIDIZED_VERSION/extra/oxidized-report-git-commits /usr/bin/oxidized-report-git-commits; \
-  find $GEMSPATH/cache -mindepth 1 -delete; \
-  find /var/lib/apt/lists -mindepth 1 -delete
+  \
+  # Install gems
+  gem install --no-document "oxidized:${OXIDIZED_VERSION}" oxidized-web; \
+  \
+  # Install helper script into stable PATH location
+  GEM_DIR="$(ruby -e 'print Gem.default_dir')"; \
+  install -m 0755 \
+    "${GEM_DIR}/gems/oxidized-${OXIDIZED_VERSION}/extra/oxidized-report-git-commits" \
+    /usr/local/bin/oxidized-report-git-commits; \
+  \
+  # Create runtime dirs and user
+  mkdir -p "${OXIDIZED_HOME}" /var/lib/oxidized; \
+  groupadd --system oxidized; \
+  useradd  --system --gid oxidized --home-dir /home/oxidized --create-home oxidized; \
+  chown -R oxidized:oxidized "${OXIDIZED_HOME}" /var/lib/oxidized /home/oxidized; \
+  \
+  # Cleanup
+  find "${GEM_DIR}/cache" -mindepth 1 -delete || true; \
+  apt-get purge -y \
+    ruby-dev g++ make cmake pkg-config \
+    libssl-dev libssh2-1-dev libicu-dev zlib1g-dev libsqlite3-dev libffi-dev \
+  ; \
+  apt-get autoremove -y --purge; \
+  rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-# Default oxidized-web port
+USER oxidized
+WORKDIR ${OXIDIZED_HOME}
+
 EXPOSE 8888
+VOLUME ["/etc/oxidized", "/var/lib/oxidized"]
 
 CMD ["oxidized"]
 
-# https://github.com/opencontainers/image-spec/blob/master/annotations.md
 LABEL org.opencontainers.image.authors="Will Brickles" \
       org.opencontainers.image.title="oxidized" \
-      org.opencontainers.image.description="software to backup network switch configurations" \
+      org.opencontainers.image.description="Software to backup network switch configurations" \
       org.opencontainers.image.version="${OXIDIZED_VERSION}"
