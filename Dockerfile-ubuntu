@@ -1,72 +1,136 @@
-FROM ubuntu:noble
+FROM ubuntu:24.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG OXIDIZED_VERSION=0.37.0
+ARG OXIDIZED_WEB_VERSION=0.18.1
+ARG RUGGED_VERSION=1.9.0
 
-ENV OXIDIZED_HOME=/etc/oxidized
-ENV PATH="/usr/local/bin:${PATH}"
+ENV OXIDIZED_HOME=/etc/oxidized \
+    HOME=/home/oxidized \
+    PATH="/usr/local/bin:${PATH}"
 
+LABEL org.opencontainers.image.authors="Will Brickles" \
+      org.opencontainers.image.title="Oxidized" \
+      org.opencontainers.image.description="Network device configuration backup service" \
+      org.opencontainers.image.version="${OXIDIZED_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+# Runtime dependencies
 RUN set -eux; \
-  apt-get update; \
-  \
-  # Runtime deps
-  apt-get install -y --no-install-recommends --no-install-suggests \
-    ruby \
-    ruby-rugged \
-    bash \
-    msmtp \
-    git \
-    ca-certificates \
-  ; \
-  \
-  # Build deps (temporary)
-  apt-get install -y --no-install-recommends --no-install-suggests \
-    ruby-dev \
-    g++ \
-    make \
-    cmake \
-    pkg-config \
-    libssl-dev \
-    libssh2-1-dev \
-    libicu-dev \
-    zlib1g-dev \
-    libsqlite3-dev \
-    libffi-dev \
-  ; \
-  \
-  # Install gems
-  gem install --no-document "oxidized:${OXIDIZED_VERSION}" oxidized-web; \
-  \
-  # Install helper script into stable PATH location
-  GEM_DIR="$(ruby -e 'print Gem.default_dir')"; \
-  install -m 0755 \
-    "${GEM_DIR}/gems/oxidized-${OXIDIZED_VERSION}/extra/oxidized-report-git-commits" \
-    /usr/local/bin/oxidized-report-git-commits; \
-  \
-  # Create runtime dirs and user
-  mkdir -p "${OXIDIZED_HOME}" /var/lib/oxidized; \
-  groupadd --system oxidized; \
-  useradd  --system --gid oxidized --home-dir /home/oxidized --create-home oxidized; \
-  chown -R oxidized:oxidized "${OXIDIZED_HOME}" /var/lib/oxidized /home/oxidized; \
-  \
-  # Cleanup
-  find "${GEM_DIR}/cache" -mindepth 1 -delete || true; \
-  apt-get purge -y \
-    ruby-dev g++ make cmake pkg-config \
-    libssl-dev libssh2-1-dev libicu-dev zlib1g-dev libsqlite3-dev libffi-dev \
-  ; \
-  apt-get autoremove -y --purge; \
-  rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      ruby \
+      bash \
+      msmtp \
+      git \
+      ca-certificates \
+      tini \
+      libssl3t64 \
+      libssh2-1t64 \
+      libicu74 \
+      zlib1g \
+      libzstd1 \
+      libyaml-0-2 \
+      libsqlite3-0 \
+      libffi8 \
+      libstdc++6 \
+    ; \
+    rm -rf /var/lib/apt/lists/*
+
+# Compile native extensions and install gems
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      ruby-dev \
+      g++ \
+      make \
+      cmake \
+      pkg-config \
+      libssl-dev \
+      libssh2-1-dev \
+      libicu-dev \
+      zlib1g-dev \
+      libzstd-dev \
+      libyaml-dev \
+      libsqlite3-dev \
+      libffi-dev \
+    ; \
+    \
+    # Use bundled libgit2 rather than Ubuntu's older libgit2
+    gem install --no-document \
+      rugged -v "${RUGGED_VERSION}"; \
+    \
+    gem install --no-document \
+      oxidized -v "${OXIDIZED_VERSION}"; \
+    \
+    gem install --no-document \
+      oxidized-web -v "${OXIDIZED_WEB_VERSION}"; \
+    \
+    # Install helper into stable executable location
+    GEM_DIR="$(ruby -e 'print Gem.default_dir')"; \
+    install -m 0755 \
+      "${GEM_DIR}/gems/oxidized-${OXIDIZED_VERSION}/extra/oxidized-report-git-commits" \
+      /usr/local/bin/oxidized-report-git-commits; \
+    \
+    # Validate versions and Ruby extension loading
+    gem list --local --exact oxidized \
+      --version "${OXIDIZED_VERSION}" --installed; \
+    gem list --local --exact oxidized-web \
+      --version "${OXIDIZED_WEB_VERSION}" --installed; \
+    gem list --local --exact rugged \
+      --version "${RUGGED_VERSION}" --installed; \
+    ruby -e 'require "rugged"; puts "Rugged #{Rugged::VERSION} loaded"'; \
+    ruby -e 'require "oxidized"; puts "Oxidized loaded"'; \
+    \
+    # Remove gem archives and temporary build tools
+    if [ -d "${GEM_DIR}/cache" ]; then \
+      find "${GEM_DIR}/cache" -type f -delete; \
+    fi; \
+    apt-get purge -y \
+      ruby-dev \
+      g++ \
+      make \
+      cmake \
+      pkg-config \
+      libssl-dev \
+      libssh2-1-dev \
+      libicu-dev \
+      zlib1g-dev \
+      libzstd-dev \
+      libyaml-dev \
+      libsqlite3-dev \
+      libffi-dev \
+    ; \
+    apt-get autoremove -y --purge; \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create unprivileged runtime account
+RUN set -eux; \
+    groupadd --system oxidized; \
+    useradd --system \
+      --gid oxidized \
+      --home-dir /home/oxidized \
+      --create-home \
+      --shell /usr/sbin/nologin \
+      oxidized; \
+    mkdir -p "${OXIDIZED_HOME}" /var/lib/oxidized; \
+    chown -R oxidized:oxidized \
+      "${OXIDIZED_HOME}" \
+      /var/lib/oxidized \
+      /home/oxidized
+
+# Final smoke test after removing build dependencies
+RUN set -eux; \
+    ruby -e 'require "rugged"; require "oxidized"; puts "Ruby dependencies OK"'; \
+    oxidized --version; \
+    test -x /usr/local/bin/oxidized-report-git-commits
 
 USER oxidized
 WORKDIR ${OXIDIZED_HOME}
 
-EXPOSE 8888
-VOLUME ["/etc/oxidized", "/var/lib/oxidized"]
+EXPOSE 8888/tcp
 
+STOPSIGNAL SIGTERM
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["oxidized"]
-
-LABEL org.opencontainers.image.authors="Will Brickles" \
-      org.opencontainers.image.title="oxidized" \
-      org.opencontainers.image.description="Software to backup network switch configurations" \
-      org.opencontainers.image.version="${OXIDIZED_VERSION}"
