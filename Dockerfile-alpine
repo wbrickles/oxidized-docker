@@ -1,67 +1,90 @@
 FROM alpine:3.23
 
 ARG OXIDIZED_VERSION=0.37.0
+ARG OXIDIZED_WEB_VERSION=0.18.1
+
 ENV OXIDIZED_HOME=/etc/oxidized
 
-RUN set -eux; \
-  \
-  # Install runtime deps
-  apk add --no-cache \
-    ruby \
-    ruby-rugged \
-    libssh2 \
-    icu-libs \
-    zlib \
-    openssl \
-    msmtp \
-    bash \
-    git \
-  ; \
-  \
-  # Install build deps (temporary)
-  apk add --no-cache --virtual .build-deps \
-    ruby-dev \
-    g++ \
-    cmake \
-    make \
-    openssl-dev \
-    icu-dev \
-    zlib-dev \
-    linux-headers \
-  ; \
-  \
-  # Install gems
-  gem install --no-document \
-    "oxidized:${OXIDIZED_VERSION}" \
-    oxidized-web \
-  ; \
-  \
-  # Resolve gem directory dynamically
-  GEM_DIR="$(ruby -e 'print Gem.default_dir')"; \
-  \
-  # Install helper script into stable PATH location
-  install -m 0755 \
-    "${GEM_DIR}/gems/oxidized-${OXIDIZED_VERSION}/extra/oxidized-report-git-commits" \
-    /usr/local/bin/oxidized-report-git-commits \
-  ; \
-  \
-  # Cleanup
-  find "${GEM_DIR}/cache" -mindepth 1 -delete; \
-  apk del .build-deps; \
-  rm -rf /var/cache/apk/*
+LABEL org.opencontainers.image.authors="Will Brickles" \
+      org.opencontainers.image.title="Oxidized" \
+      org.opencontainers.image.description="Network device configuration backup service" \
+      org.opencontainers.image.version="${OXIDIZED_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0"
 
+# Runtime dependencies
+RUN set -eux; \
+    apk add --no-cache \
+      ruby \
+      ruby-rugged \
+      libssh2 \
+      icu-libs \
+      zlib \
+      zstd-libs \
+      yaml \
+      openssl \
+      ca-certificates \
+      msmtp \
+      bash \
+      git \
+      tini \
+    ; \
+    update-ca-certificates
+
+# Build and install Ruby gems
+RUN set -eux; \
+    apk add --no-cache --virtual .build-deps \
+      ruby-dev \
+      g++ \
+      cmake \
+      make \
+      pkgconf \
+      openssl-dev \
+      libssh2-dev \
+      icu-dev \
+      zlib-dev \
+      zstd-dev \
+      yaml-dev \
+      linux-headers \
+    ; \
+    \
+    gem install --no-document \
+      oxidized -v "${OXIDIZED_VERSION}"; \
+    \
+    gem install --no-document \
+      oxidized-web -v "${OXIDIZED_WEB_VERSION}"; \
+    \
+    GEM_DIR="$(ruby -e 'print Gem.default_dir')"; \
+    \
+    install -m 0755 \
+      "${GEM_DIR}/gems/oxidized-${OXIDIZED_VERSION}/extra/oxidized-report-git-commits" \
+      /usr/local/bin/oxidized-report-git-commits; \
+    \
+    # Validate installed gem versions and native dependencies
+    gem list --local --exact oxidized \
+      --version "${OXIDIZED_VERSION}" --installed; \
+    gem list --local --exact oxidized-web \
+      --version "${OXIDIZED_WEB_VERSION}" --installed; \
+    ruby -e 'require "rugged"; puts "Rugged #{Gem.loaded_specs.fetch("rugged").version} loaded successfully"'; \
+    ruby -e 'require "oxidized"; puts "Oxidized loaded successfully"'; \
+    \
+    # Remove build dependencies and gem downloads
+    if [ -d "${GEM_DIR}/cache" ]; then \
+      find "${GEM_DIR}/cache" -type f -delete; \
+    fi; \
+    apk del .build-deps
+
+# Dedicated unprivileged service account
 RUN addgroup -S oxidized \
  && adduser -S -G oxidized oxidized \
  && mkdir -p "${OXIDIZED_HOME}" \
- && chown -R oxidized:oxidized "${OXIDIZED_HOME}"
+ && chown oxidized:oxidized "${OXIDIZED_HOME}"
 
 USER oxidized
 WORKDIR ${OXIDIZED_HOME}
 
-EXPOSE 8888
-CMD ["oxidized"]
+EXPOSE 8888/tcp
 
-LABEL org.opencontainers.image.authors="Will Brickles" \
-      org.opencontainers.image.title="oxidized" \
-      org.opencontainers.image.description="software to backup network switch configurations" \
-      org.opencontainers.image.version="${OXIDIZED_VERSION}"
+STOPSIGNAL SIGTERM
+
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["oxidized"]
