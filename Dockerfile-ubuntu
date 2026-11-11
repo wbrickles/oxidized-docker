@@ -15,9 +15,12 @@ LABEL org.opencontainers.image.authors="Will Brickles" \
       org.opencontainers.image.version="${OXIDIZED_VERSION}" \
       org.opencontainers.image.licenses="Apache-2.0"
 
-# Runtime dependencies
+# Install runtime dependencies, compile gems, and remove build
+# dependencies in a single layer to minimize final image size.
 RUN set -eux; \
     apt-get update; \
+    \
+    # Runtime dependencies
     apt-get install -y --no-install-recommends \
       ruby \
       bash \
@@ -35,11 +38,8 @@ RUN set -eux; \
       libffi8 \
       libstdc++6 \
     ; \
-    rm -rf /var/lib/apt/lists/*
-
-# Compile native extensions and install gems
-RUN set -eux; \
-    apt-get update; \
+    \
+    # Temporary build dependencies
     apt-get install -y --no-install-recommends \
       ruby-dev \
       g++ \
@@ -56,36 +56,30 @@ RUN set -eux; \
       libffi-dev \
     ; \
     \
-    # Use bundled libgit2 rather than Ubuntu's older libgit2
-    gem install --no-document \
-      rugged -v "${RUGGED_VERSION}"; \
+    # Install pinned Ruby gems
+    gem install --no-document rugged -v "${RUGGED_VERSION}"; \
+    gem install --no-document oxidized -v "${OXIDIZED_VERSION}"; \
+    gem install --no-document oxidized-web -v "${OXIDIZED_WEB_VERSION}"; \
     \
-    gem install --no-document \
-      oxidized -v "${OXIDIZED_VERSION}"; \
-    \
-    gem install --no-document \
-      oxidized-web -v "${OXIDIZED_WEB_VERSION}"; \
-    \
-    # Install helper into stable executable location
+    # Install Git reporting helper
     GEM_DIR="$(ruby -e 'print Gem.default_dir')"; \
     install -m 0755 \
       "${GEM_DIR}/gems/oxidized-${OXIDIZED_VERSION}/extra/oxidized-report-git-commits" \
       /usr/local/bin/oxidized-report-git-commits; \
     \
-    # Validate versions and Ruby extension loading
-    gem list --local --exact oxidized \
-      --version "${OXIDIZED_VERSION}" --installed; \
-    gem list --local --exact oxidized-web \
-      --version "${OXIDIZED_WEB_VERSION}" --installed; \
-    gem list --local --exact rugged \
-      --version "${RUGGED_VERSION}" --installed; \
-    ruby -e 'require "rugged"; puts "Rugged #{Rugged::VERSION} loaded"'; \
-    ruby -e 'require "oxidized"; puts "Oxidized loaded"'; \
+    # Remove bundled libgit2 source and compilation artifacts
+    # while retaining Rugged's compiled runtime extension.
+    RUGGED_DIR="$(ruby -e 'print Gem::Specification.find_by_name("rugged").full_gem_path')"; \
+    rm -rf \
+      "${RUGGED_DIR}/vendor" \
+      "${RUGGED_DIR}/ext"; \
     \
-    # Remove gem archives and temporary build tools
+    # Remove downloaded gem archives
     if [ -d "${GEM_DIR}/cache" ]; then \
       find "${GEM_DIR}/cache" -type f -delete; \
     fi; \
+    \
+    # Remove temporary build dependencies
     apt-get purge -y \
       ruby-dev \
       g++ \
@@ -102,9 +96,18 @@ RUN set -eux; \
       libffi-dev \
     ; \
     apt-get autoremove -y --purge; \
-    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*; \
+    \
+    # Validate dependencies after cleanup
+    ruby -e 'require "rugged"; require "oxidized"; puts "Ruby dependencies OK"'; \
+    test "$(ruby -e 'require "rugged"; print Rugged::VERSION')" = "${RUGGED_VERSION}"; \
+    gem list --local --exact oxidized-web \
+      --version "${OXIDIZED_WEB_VERSION}" --installed; \
+    test "$(oxidized --version)" = "${OXIDIZED_VERSION}"; \
+    test -x /usr/local/bin/oxidized-report-git-commits
 
-# Create unprivileged runtime account
+# Create dedicated, unprivileged service account
 RUN set -eux; \
     groupadd --system oxidized; \
     useradd --system \
@@ -118,12 +121,6 @@ RUN set -eux; \
       "${OXIDIZED_HOME}" \
       /var/lib/oxidized \
       /home/oxidized
-
-# Final smoke test after removing build dependencies
-RUN set -eux; \
-    ruby -e 'require "rugged"; require "oxidized"; puts "Ruby dependencies OK"'; \
-    oxidized --version; \
-    test -x /usr/local/bin/oxidized-report-git-commits
 
 USER oxidized
 WORKDIR ${OXIDIZED_HOME}
