@@ -48,6 +48,9 @@ RUN set -eux; \
       linux-headers \
     ; \
     \
+    # Install a compatible SCP
+    gem install --no-document net-scp -v '~> 4.2'; \
+    \
     gem install --no-document \
       oxidized -v "${OXIDIZED_VERSION}"; \
     \
