@@ -3,7 +3,8 @@ FROM alpine:3.23
 ARG OXIDIZED_VERSION=0.38.0
 ARG OXIDIZED_WEB_VERSION=0.18.1
 
-ENV OXIDIZED_HOME=/etc/oxidized
+ENV OXIDIZED_HOME=/etc/oxidized \
+    LANG=C.UTF-8
 
 LABEL org.opencontainers.image.authors="Will Brickles" \
       org.opencontainers.image.title="Oxidized" \
